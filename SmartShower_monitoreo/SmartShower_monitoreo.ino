@@ -1,21 +1,28 @@
+ /*
+ Sugested TFT connections for UNO and Atmega328 based boards
+   sclk 13  // Don't change, this is the hardware SPI SCLK line
+   mosi 11  // Don't change, this is the hardware SPI MOSI line
+   cs   10  // Chip select for TFT display
+   dc   9   // Data/command line
+   rst  7   // Reset, you could connect this to the Arduino reset pin
+*/
+
 //Includes
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
-#include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
-#include <TFT_ILI9341.h> 
-#include <MsTimer2.h>
 
 //Definitions
 #define FLUJO_PIN           2
 #define TEMP_PIN            3
+#define LED_G               6
+#define LED_R               5
 #define drawTime            5000 //tiempo [ms] entre duchas
 #define calibrationFactor   7
 
 //hardware
-TFT_ILI9341 tft = TFT_ILI9341();
 Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 RF24 radio(7, 8); // CE, CSN
 
@@ -24,33 +31,23 @@ int                     totalAgua           = 0;
 bool                    flag_erase          = false;
 volatile byte           pulseCount;  
 float                   flowRate;
-unsigned long           flowMilliLitres;
+float                   flowMilliLitres;
+float                   flow1;
+float                   flow2;
 
 unsigned long           temperature;
 unsigned long           oldTime;
 unsigned long           currentTime;
 const byte              address[6]          = "00001";  
 char                    message[32];
-StaticJsonDocument<200> doc;
-JsonObject              root;
+
+int i = 1;
 
 //Functions
 //funcion para manejar interrupcion de sensor
 void pulseCounter(){
   pulseCount++;
 }
-//funcion timer que guarda el total de agua por un tiempo t y lo borra despues de ese tiempo
-
-/*
-void saveTotal(){
-  if( totalMilliLitres - totalAgua > 100 ){
-    totalAgua = totalMilliLitres;
-  } else {
-    totalAgua = 0;
-    totalMilliLitres = 0;
-  }
-}
-*/
 
 String generateMessage(){
   String dato = String(flowMilliLitres)+":"+String(temperature);
@@ -58,50 +55,57 @@ String generateMessage(){
 }
 
 //funcion para enviar mensaje
-void sendMessage(String dato){
+bool sendMessage(String dato){
   dato.toCharArray(message, sizeof(message));
-  //char text[] = "Hello World";
   if (radio.write(&message, sizeof(message))){
     Serial.print("Mensaje: ");
     Serial.println(message);
+    return true;
   } else {
     Serial.println("ERROR");
+    return false;
   }
 }
 void printMedidas(){
   Serial.print("Flow rate: ");
   Serial.print(flowMilliLitres);
   Serial.print("mL/Sec"); 
-
-  // Print the cumulative total of litres flowed since starting
-  Serial.print("  Water temperature: ");             // Output separator
+  Serial.print("  Water temperature: "); 
   Serial.print(temperature);
   Serial.println("*C");
 }
-
 void setup() {
   Serial.begin(9600);
   //Inicio Hardware
-  mlx.begin();
-  tft.init();
-  radio.begin();
   pinMode(FLUJO_PIN, INPUT_PULLUP);
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(LED_R, OUTPUT);
+  pinMode(LED_G, OUTPUT);
+  mlx.begin();
+  radio.begin();
   //Configuracion RF
   radio.openWritingPipe(address);
   radio.setPALevel(RF24_PA_MIN);
   radio.stopListening();
-  //Timer para saveTotal
-  //MsTimer2::set(drawTime, saveTotal); // 10000ms period
-  //MsTimer2::start();
   //Inicializacion de variables
   pulseCount        = 0;
   flowRate          = 0.0;
   flowMilliLitres   = 0;
-  oldTime           = millis();   
+  flow1             = 0;
+  flow2             = 0; 
+  i                 = 1; 
+  temperature       = mlx.readObjectTempC();  
+  attachInterrupt(digitalPinToInterrupt(FLUJO_PIN), pulseCounter, RISING);
   
-  attachInterrupt(digitalPinToInterrupt(FLUJO_PIN), pulseCounter, RISING); 
+  //Envia dato vacio
+  oldTime           = millis(); 
+  Serial.println("INICIO DE TRANSMISION: "+String(oldTime)+"ms");
+  if(sendMessage(generateMessage())){
+     digitalWrite(LED_G,HIGH);
+     digitalWrite(LED_R,LOW);
+  } else {
+     digitalWrite(LED_G,LOW);
+     digitalWrite(LED_R,HIGH);
+  }
 }
 
 void loop(){
@@ -109,11 +113,25 @@ void loop(){
   if((currentTime - oldTime) > 450)    // Only process counters once per second
   { 
     detachInterrupt(FLUJO_PIN);
-    flowRate = ((1000.0 / (currentTime - oldTime)) * pulseCount) / calibrationFactor;
-    flowMilliLitres = (flowRate / 60) * 1000;
-    temperature = mlx.readObjectTempC();
+    flowRate = ((1000.0 / (float)(currentTime - oldTime)) * (float)pulseCount) / (float)calibrationFactor;
+    flowRate = (flowRate / 60) * 1000;
+    if (i){
+      flow1 = flowRate;
+      i = 0;
+    } else {
+      flow2 = flowRate;
+      flowMilliLitres = (flow1 + flow2)/2;
+      temperature = mlx.readObjectTempC();
+      if(sendMessage(generateMessage())){
+        digitalWrite(LED_G,HIGH);
+        digitalWrite(LED_R,LOW);
+      } else {
+        digitalWrite(LED_G,LOW);
+        digitalWrite(LED_R,HIGH);
+      }
+      i = 1;
+    }
     //printMedidas();
-    sendMessage(generateMessage());
     // Reset the pulse counter so we can start incrementing again
     pulseCount = 0;
 
