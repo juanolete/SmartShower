@@ -51,6 +51,7 @@ Typical setup for ESP8266 NodeMCU ESP-12 is :
 #include <Stream.h>
 #include <ArduinoJson.h>
 #include <EEPROM.h>
+#include "ThingSpeak.h"
 
 // Includes for WiFi configure
 #include <ESP8266WiFi.h>
@@ -59,7 +60,7 @@ Typical setup for ESP8266 NodeMCU ESP-12 is :
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 
-#define         tMaxInterrupt         10 //segundos
+#define         tMaxInterrupt         5 //segundos
 #define         TOGGLE_PIN            0
 //Software
 char*           flowMilliLitres;
@@ -70,22 +71,42 @@ char*           temperature;
 os_timer_t      tmr0;
 const byte      address[6] = "00001";
 Ticker          reset;
+bool            flag_agua;
 
 //manejar AP
 boolean         m_conn_state = false;
 boolean         m_ap_state = false;
 int             flag_addr = 0;
 long            flag_ap = 0;
+WiFiManager     wifiManager;
+String          old_ssid;
+String          old_psk;
+
+//ThingSpeak use
+WiFiClient      client;
+unsigned long myChannelNumber = 557572;
+const char * myWriteAPIKey = "S4TSK8EJVECDYAYN";
+int             status = WL_IDLE_STATUS;
 
 //Hardware
 TFT_eSPI        tft = TFT_eSPI();
 RF24            radio(PIN_D4, PIN_D8); // CE, CSN
 //for EEPROM use
-int             memory = 8;
+int             memory = 16;
+//for button interrupts
+int push_time;
+int release_time;
+int button_state_ant = 1;
+int button_state;
 
 //To reset WifiManager values and Access Point config
 void ISR_Reset() {
+  WiFi.disconnect();
   wifiManager.resetSettings();
+  delay(1000);
+  wifiManager.resetSettings();
+  delay(1000);
+  WiFi.disconnect();
   delay(1000);
   ESP.reset();
 }
@@ -118,20 +139,18 @@ void ICACHE_RAM_ATTR button_interrupt() {
       Serial.println("Boton soltado");
       release_time = millis();
       Serial.println(release_time - push_time );
-
-      if (release_time - push_time >= 5000) {
+      if (release_time - push_time >= 1000) {
         Serial.println("Boton presionado 5 segundos");
-        Serial.println("##ESP reboot");
-        ESP.reset();
-        return;
-
-      } else if (release_time - push_time >= 3000) {
-        Serial.println("Boton presionado 3 segundos");
         Serial.println("##WiFi configuration reset");
         Serial.println("##Rebooting");
         flag_ap = 1;
         eWriteLong(flag_addr, flag_ap);
         ISR_Reset();
+        return;
+      } else if (release_time - push_time >= 30) {
+        Serial.println("Boton presionado 3 segundos");
+        Serial.println("##ESP reboot");
+        ESP.reset();
         return;
       }
     }
@@ -206,32 +225,51 @@ void borrarAgua(){
 }
 
 void aguaHandler(){
-  borrarAgua();
-  tft.drawString("No data", 120, 90, GFXFF);
-  tft.setFreeFont(FF42);
-  tft.drawString("No data", 120, 160, GFXFF);
-  tft.drawString("No data", 120, 270, GFXFF);
-  //serverPost();
+  flag_agua = true;
+}
+
+void myDisconnect(){
+  WiFi.persistent(false);      
+  WiFi.disconnect();          
+  WiFi.persistent(true);
+  Serial.println("## WiFi disconnected");
 }
 
 int first_start = 1;
 
 void setup() {
-  eeprom.BEGIN(memory);
+  EEPROM.begin(memory);
   Serial.begin(9600);
-
+  tft.begin();
+  tft.setRotation(0);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.fillScreen(TFT_BLACK);
+  
+/*
   if (first_start) {
+    Serial.println("## First Start");
     eWriteLong(flag_addr, 1);
     first_start = 0;
   }
-  flag_ap = eGetLong(flag_addr)
+*/
+
+  flag_ap = eGetLong(flag_addr);
+  Serial.println("flag ap: "+String(flag_ap));
+  pinMode(TOGGLE_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(TOGGLE_PIN), button_interrupt, CHANGE);
+  
   wifiManager.setAPCallback(configModeCallback);
 
   if (flag_ap == 0) {
+    tft.setFreeFont(FF43);                 
+    tft.drawString("RECONNECTING", 120, 140, GFXFF);
     WifiReconnect();
   } else {
-    if (!wifiManager.autoConnect("SmartShower", "123456789")) { //you can change the pass "lapassmundial" to another one
+    tft.setFreeFont(FF43);                 
+    tft.drawString("ACCESS", 120, 140, GFXFF);
+    tft.drawString("POINT", 120, 180, GFXFF);
+    if (!wifiManager.autoConnect("SmartShower", "123456789")) {
       delay(3000);
       ESP.reset();
     }
@@ -239,14 +277,19 @@ void setup() {
   //ACA SE DEBE DESCONECTAR DEL WIFI UNA VEZ CONECTADO
   flag_ap = 0;
   eWriteLong(flag_addr, flag_ap);
-
-  tft.begin();
-  tft.setRotation(2);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  
+  Serial.print("Connected to WiFi Network: ");
+  m_ap_state = false;
+  m_conn_state = true;
+  Serial.println(WiFi.SSID());
+  old_ssid = WiFi.SSID();
+  old_psk = WiFi.psk();
+  while (WiFi.status() == WL_CONNECTED){
+    myDisconnect();
+    Serial.print(" ");
+  }
+  Serial.println(" ");
   tft.fillScreen(TFT_BLACK);
-
-  tft.setFreeFont(FF43);                 // Select the font
   tft.drawString("AGUA", 120, 30, GFXFF);// Print the string name of the font
   tft.drawString("CONSUMIDA", 120, 60, GFXFF);// Print the string name of the font
 
@@ -264,7 +307,7 @@ void setup() {
   radio.startListening();
   radio.setPayloadSize(100);
 
-  reset.once(10,aguaHandler);
+  reset.once(tMaxInterrupt,aguaHandler);
 }
 
 void printData(){
@@ -276,6 +319,7 @@ void printData(){
 void loop() {
   if (radio.available()) {
     reset.detach();
+    flag_agua = false;
     reset.once(tMaxInterrupt,aguaHandler);
     char message[100] = "";
     radio.read(&message, sizeof(message));
@@ -286,5 +330,28 @@ void loop() {
     borrarAgua();
     escribirAgua();
     printData();
+  } else {
+    if (flag_agua == true){
+        WiFi.begin(old_ssid.c_str(), old_psk.c_str());
+        WiFi.reconnect();
+        while(WiFi.status() != WL_CONNECTED){
+          Serial.print(".");
+          delay(500);
+        }
+        Serial.println(" ");
+        Serial.print("Conectado a red: ");
+        Serial.println(WiFi.SSID());
+        ThingSpeak.begin(client);
+        ThingSpeak.writeField(myChannelNumber, 1, totalMilliLitres/(float)1000, myWriteAPIKey);
+        totalMilliLitres = 0;
+        totalAnterior = 0;
+        borrarAgua();
+        tft.drawString("No data", 120, 90, GFXFF);
+        tft.setFreeFont(FF42);
+        tft.drawString("No data", 120, 160, GFXFF);
+        tft.drawString("No data", 120, 270, GFXFF);
+        flag_agua = false;  
+        myDisconnect();
+    }
   }
 }

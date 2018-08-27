@@ -20,7 +20,7 @@
 #define LED_G               6
 #define LED_R               5
 #define drawTime            5000 //tiempo [ms] entre duchas
-#define calibrationFactor   7
+float                       calibrationFactor  = 7.7639;
 
 //hardware
 Adafruit_MLX90614 mlx = Adafruit_MLX90614();
@@ -113,7 +113,7 @@ void loop(){
   if((currentTime - oldTime) > 450)    // Only process counters once per second
   { 
     detachInterrupt(FLUJO_PIN);
-    flowRate = ((1000.0 / (float)(currentTime - oldTime)) * (float)pulseCount) / (float)calibrationFactor;
+    flowRate = 2*((1000.0 / (float)(currentTime - oldTime)) * (float)pulseCount) / (float)calibrationFactor;
     flowRate = (flowRate / 60) * 1000;
     if (i){
       flow1 = flowRate;
