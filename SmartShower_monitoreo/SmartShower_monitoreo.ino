@@ -20,10 +20,10 @@
 #define LED_G               6
 #define LED_R               5
 #define drawTime            5000 //tiempo [ms] entre duchas
-float                       calibrationFactor  = 7.7639;
+float                       calibrationFactor  = 7.7639; //7.7639
 
 //hardware
-Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+//Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 RF24 radio(7, 8); // CE, CSN
 
 //Software
@@ -80,11 +80,11 @@ void setup() {
   pinMode(FLUJO_PIN, INPUT_PULLUP);
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
-  mlx.begin();
+  //mlx.begin();
   radio.begin();
   //Configuracion RF
   radio.openWritingPipe(address);
-  radio.setPALevel(RF24_PA_MIN);
+  radio.setPALevel(RF24_PA_HIGH);
   radio.stopListening();
   //Inicializacion de variables
   pulseCount        = 0;
@@ -92,8 +92,9 @@ void setup() {
   flowMilliLitres   = 0;
   flow1             = 0;
   flow2             = 0; 
-  i                 = 1; 
-  temperature       = mlx.readObjectTempC();  
+  i                 = 3; 
+  //temperature       = mlx.readObjectTempC();  
+  temperature = 0;
   attachInterrupt(digitalPinToInterrupt(FLUJO_PIN), pulseCounter, RISING);
   
   //Envia dato vacio
@@ -113,15 +114,20 @@ void loop(){
   if((currentTime - oldTime) > 450)    // Only process counters once per second
   { 
     detachInterrupt(FLUJO_PIN);
-    flowRate = 2*((1000.0 / (float)(currentTime - oldTime)) * (float)pulseCount) / (float)calibrationFactor;
+    flowRate = ((1000.0 / (float)(currentTime - oldTime)) * (float)pulseCount) / (float)calibrationFactor;
     flowRate = (flowRate / 60) * 1000;
-    if (i){
+    if (i==3){
+      flowMilliLitres = flowRate*2.8;
+      sendMessage(generateMessage());
+      i = 1;      
+    } else if (i==1){
       flow1 = flowRate;
       i = 0;
     } else {
       flow2 = flowRate;
       flowMilliLitres = (flow1 + flow2)/2;
-      temperature = mlx.readObjectTempC();
+      //temperature = mlx.readObjectTempC();
+      temperature = 0;
       if(sendMessage(generateMessage())){
         digitalWrite(LED_G,HIGH);
         digitalWrite(LED_R,LOW);

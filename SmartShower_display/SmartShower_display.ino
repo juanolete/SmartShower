@@ -37,7 +37,7 @@ Typical setup for ESP8266 NodeMCU ESP-12 is :
 */
 
 #include "Free_Fonts.h" // Include the header file attached to this sketch
-#include <user_interface.h>;//Biblioteca necessaria para acessar os Timer`s.
+ //Biblioteca necessaria para acessar os Timer`s.
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
@@ -60,7 +60,7 @@ Typical setup for ESP8266 NodeMCU ESP-12 is :
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 
-#define         tMaxInterrupt         5 //segundos
+#define         tMaxInterrupt         60 //segundos
 #define         TOGGLE_PIN            0
 //Software
 char*           flowMilliLitres;
@@ -68,7 +68,8 @@ int             flowAnterior = 0;
 float           totalMilliLitres = 0; 
 float           totalAnterior = 0;
 char*           temperature;
-os_timer_t      tmr0;
+float           MaxLitres = 50;
+
 const byte      address[6] = "00001";
 Ticker          reset;
 bool            flag_agua;
@@ -98,6 +99,7 @@ int push_time;
 int release_time;
 int button_state_ant = 1;
 int button_state;
+int tant;
 
 //To reset WifiManager values and Access Point config
 void ISR_Reset() {
@@ -201,27 +203,68 @@ void decodeMessage(char* message){
 
 void escribirAgua(){
   tft.setFreeFont(FF43);
-  tft.drawString(String(totalMilliLitres)+ " ml", 120, 90, GFXFF);// Print the string name of the font
+  if(totalMilliLitres >= MaxLitres*1000){
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    tft.drawString(String(totalMilliLitres/1000)+ " Lt", 120, 80, GFXFF);// Print the string name of the font
+  } else{
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.drawString(String(totalMilliLitres/1000)+ " Lt", 120, 80, GFXFF);// Print the string name of the font
+  }
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.setFreeFont(FF42);
-  tft.drawString(String(flowMilliLitres)+ " ml", 120, 160, GFXFF);// Print the string name of the font
+  tft.drawString(String(flowMilliLitres)+ " ml/seg", 120, 150, GFXFF);// Print the string name of the font
   //tft.setFreeFont(FF43);
-  tft.drawString(String(temperature)+ " *C", 120, 270, GFXFF);// Print the string name of the font
+  //tft.drawString(String(temperature)+ " *C", 120, 270, GFXFF);// Print the string name of the font
+}
+
+void escribirTiempo(){
+  delay(200);
+  tft.setFreeFont(FF44);
+  tft.drawString("             ",120,270,GFXFF);
+  float deltaMl = MaxLitres*1000 - totalMilliLitres;
+  int tiempo, minutos , segundos;
+  float flowmil = atof(flowMilliLitres);
+  if(deltaMl >0){
+    if(flowmil > 0){
+      tiempo =(int)(deltaMl /flowmil);
+      minutos = tiempo / 60;
+      segundos = tiempo - minutos*60;
+      if(minutos >= 10){
+        if(segundos >= 10){
+          tft.drawString(String(minutos)+":"+String(segundos), 120,270, GFXFF);
+        } else {
+          tft.drawString(String(minutos)+":0"+String(segundos), 120,270, GFXFF);
+        }
+      } else {
+        if(segundos >= 10){
+          tft.drawString("0"+String(minutos)+":"+String(segundos), 120,270, GFXFF);
+        } else {
+          tft.drawString("0"+String(minutos)+":0"+String(segundos), 120,270, GFXFF);
+        }
+      }
+    } else {
+      tft.drawString("-",120,270,GFXFF);
+    }
+  } else {
+    tft.drawString("00:00",120,270,GFXFF);;
+  }
+  
 }
 
 void resetAgua(){
   borrarAgua();
-  tft.drawString(String(0)+ " ml", 120, 90, GFXFF);// Print the string name of the font
+  tft.drawString(String(0)+ " Lt", 120, 80, GFXFF);// Print the string name of the font
   tft.setFreeFont(FF42);
-  tft.drawString(String(0)+ " ml", 120, 160, GFXFF);// Print the string name of the font
+  tft.drawString(String(0)+ " ml/seg", 120, 150, GFXFF);// Print the string name of the font
   //tft.setFreeFont(FF43);
-  tft.drawString(String(20)+ " *C", 120, 270, GFXFF);// Print the string name of the font
+  //tft.drawString(String(20)+ " *C", 120, 270, GFXFF);// Print the string name of the font
 }
 
 void borrarAgua(){
     tft.setFreeFont(FF43);
-    tft.drawString("                          ", 120, 90, GFXFF);  
-    tft.drawString("                          ", 120, 160, GFXFF);
-    tft.drawString("                          ", 120, 270, GFXFF);  
+    tft.drawString("                          ", 120, 80, GFXFF);  
+    tft.drawString("                          ", 120, 150, GFXFF);
+    //tft.drawString("                          ", 120, 270, GFXFF);  
 }
 
 void aguaHandler(){
@@ -236,6 +279,14 @@ void myDisconnect(){
 }
 
 int first_start = 1;
+
+void writeTitles(){
+  tft.setFreeFont(FF42);
+  tft.drawString("AGUA", 120, 20, GFXFF);// Print the string name of the font
+  tft.drawString("CONSUMIDA", 120, 50, GFXFF);// Print the string name of the font
+  tft.drawString("FLUJO DE AGUA", 120, 120, GFXFF);// Print the string name of the font
+  tft.drawString("TIEMPO RESTANTE",120, 230,GFXFF);
+}
 
 void setup() {
   EEPROM.begin(memory);
@@ -290,14 +341,10 @@ void setup() {
   }
   Serial.println(" ");
   tft.fillScreen(TFT_BLACK);
-  tft.drawString("AGUA", 120, 30, GFXFF);// Print the string name of the font
-  tft.drawString("CONSUMIDA", 120, 60, GFXFF);// Print the string name of the font
+  writeTitles();
 
-  tft.setFreeFont(FF42);
-  tft.drawString("FLUJO DE AGUA", 120, 130, GFXFF);// Print the string name of the font
-
-  tft.setFreeFont(FF42);                 // Select the font
-  tft.drawString("TEMPERATURA", 120, 240, GFXFF);// Print the string name of the font
+  //tft.setFreeFont(FF42);                 // Select the font
+  //tft.drawString("TEMPERATURA", 120, 240, GFXFF);// Print the string name of the font
 
   resetAgua();
   
@@ -306,7 +353,8 @@ void setup() {
   radio.setPALevel(RF24_PA_MIN);
   radio.startListening();
   radio.setPayloadSize(100);
-
+  
+  tant = millis();
   reset.once(tMaxInterrupt,aguaHandler);
 }
 
@@ -318,6 +366,7 @@ void printData(){
 
 void loop() {
   if (radio.available()) {
+    tant = millis();
     reset.detach();
     flag_agua = false;
     reset.once(tMaxInterrupt,aguaHandler);
@@ -325,12 +374,22 @@ void loop() {
     radio.read(&message, sizeof(message));
     Serial.println(message);
     decodeMessage(message); 
-    totalMilliLitres += atof(flowMilliLitres)/2;
+    totalMilliLitres += atof(flowMilliLitres);
     totalAnterior = totalMilliLitres;
     borrarAgua();
     escribirAgua();
+    escribirTiempo();
     printData();
   } else {
+    if ( millis() - tant > 2000 ){
+      tant = millis();
+      tft.setFreeFont(FF42);
+      tft.drawString("                        ", 120, 150, GFXFF);
+      tft.drawString("0.00 ml/seg", 120, 150, GFXFF);
+      tft.setFreeFont(FF44);
+      tft.drawString("             ",120, 270, GFXFF);
+      tft.drawString("-",120, 270, GFXFF);
+    }
     if (flag_agua == true){
         WiFi.begin(old_ssid.c_str(), old_psk.c_str());
         WiFi.reconnect();
@@ -345,11 +404,15 @@ void loop() {
         ThingSpeak.writeField(myChannelNumber, 1, totalMilliLitres/(float)1000, myWriteAPIKey);
         totalMilliLitres = 0;
         totalAnterior = 0;
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);
         borrarAgua();
-        tft.drawString("No data", 120, 90, GFXFF);
+        tft.drawString("No data", 120, 80, GFXFF);
         tft.setFreeFont(FF42);
-        tft.drawString("No data", 120, 160, GFXFF);
-        tft.drawString("No data", 120, 270, GFXFF);
+        tft.drawString("No data", 120, 150, GFXFF);
+        //tft.drawString("No data", 120, 270, GFXFF);
+        tft.setFreeFont(FF44);
+        tft.drawString("                              ",120, 270, GFXFF);
+        tft.drawString("-",120, 270, GFXFF);
         flag_agua = false;  
         myDisconnect();
     }
